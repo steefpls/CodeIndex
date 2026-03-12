@@ -1,0 +1,36 @@
+[project]
+name = "augmentus-code-index"
+version = "0.3.0"
+description = "Local MCP server for semantic code search across Augmentus repos"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp[cli]",
+    "tree-sitter",
+    "tree-sitter-c-sharp",
+    "tree-sitter-cpp",
+    "tree-sitter-python",
+    "tree-sitter-javascript",
+    "tree-sitter-html",
+    "tree-sitter-rust",
+    "tree-sitter-typescript",
+    "tree-sitter-css",
+    "chromadb",
+    "sentence-transformers",
+    "transformers",
+    "einops",
+    "onnxscript",
+    "PyYAML>=6.0",
+]
+
+# NOTE: onnxruntime is NOT listed in dependencies. The correct GPU-specific variant
+# (onnxruntime-gpu for NVIDIA, onnxruntime-directml for AMD/Intel, or plain
+# onnxruntime for CPU) is installed by setup.bat via scripts/detect_gpu.py.
+# These packages share the same Python namespace and CONFLICT if co-installed.
+# Never add any onnxruntime variant here — setup.bat handles it.
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
