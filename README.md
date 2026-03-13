@@ -1,4 +1,4 @@
-# augmentus-code-index
+# code-index
 
 Local MCP server that gives AI coding agents (Claude Code) semantic search over codebases. Supports C#, C++, Python, JavaScript, HTML, and Unity prefabs/scenes. Instead of wasting tokens exploring thousands of files, agents call `search_code("hand-eye calibration")` and get the most relevant code chunks instantly.
 
