@@ -250,7 +250,7 @@ class TestBackendRoleRouting(unittest.TestCase):
     def test_session_init_strategy_search_cpu_prefers_fast_cold_start(self):
         from src.indexer.embedder import _session_init_strategy, _use_lightweight_profile
 
-        self.assertEqual(_session_init_strategy("search", "cpu"), ("extended", False))
+        self.assertEqual(_session_init_strategy("search", "cpu"), ("disabled", False))
         self.assertEqual(_session_init_strategy("search", "gpu"), ("all", True))
         self.assertEqual(_session_init_strategy("index", "cpu"), ("all", True))
         self.assertEqual(_session_init_strategy("index", "gpu"), ("all", True))

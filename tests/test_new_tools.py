@@ -484,8 +484,8 @@ class TestAssetExtension(unittest.TestCase):
     """Test that file_scanner includes .asset files for unity language."""
 
     def test_asset_in_extensions(self):
-        from src.indexer.file_scanner import _LANGUAGE_EXTENSIONS
-        self.assertIn(".asset", _LANGUAGE_EXTENSIONS.get("unity", []))
+        from src.config import LANGUAGE_EXTENSIONS
+        self.assertIn(".asset", LANGUAGE_EXTENSIONS.get("unity", []))
 
 
 # ── Dependency graph ─────────────────────────────────────────────────────────
