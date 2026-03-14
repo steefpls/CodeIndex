@@ -20,6 +20,7 @@ dependencies = [
     "einops",
     "onnxscript",
     "PyYAML>=6.0",
+    "networkx",
 ]
 
 # NOTE: onnxruntime is NOT listed in dependencies. The correct GPU-specific variant

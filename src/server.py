@@ -25,6 +25,7 @@ from src.tools.assembly_graph import get_assembly_graph as _get_assembly_graph, 
 from src.tools.asset_references import find_asset_references as _find_asset_references, invalidate_asset_ref_cache
 from src.tools.project_info import get_project_info as _get_project_info
 from src.tools.class_deps import get_class_dependencies as _get_class_dependencies, invalidate_dep_cache
+from src.graph.activation import invalidate_graph_cache as invalidate_activation_cache
 from src.tools.unity_context import get_unity_entity_context as _get_unity_entity_context
 from src.indexer.embedder import get_embedding_function, get_active_backend, release_embedding_function
 
@@ -79,12 +80,14 @@ def _startup_check():
 def search_code(query: str, repo: str = "all", n_results: int = 10,
                 module: str | None = None, chunk_type: str | None = None,
                 offset: int = 0, file_path: str | None = None,
+                strategy: str = "associative",
                 output_format: str = "text") -> str:
-    """Semantic search across indexed C#, C++, Python, JavaScript, HTML code,
-    and Unity prefab/scene files.
+    """Semantic search with spreading activation and RRF fusion across indexed
+    C#, C++, Python, JavaScript, HTML code, and Unity prefab/scene files.
 
-    Searches code chunks using natural language queries. Returns source snippets
-    with file paths, line numbers, and chunk IDs.
+    Searches code chunks using natural language queries, then explores the class
+    dependency graph outward from hits via spreading activation, and merges both
+    rankings with Reciprocal Rank Fusion. Use strategy="semantic" for vector-only.
 
     Best for: discovering code by describing what it does (e.g., "hand-eye
     calibration workflow", "TCP pose transformation"). For exact symbol name
@@ -108,12 +111,14 @@ def search_code(query: str, repo: str = "all", n_results: int = 10,
         file_path: Optional path prefix filter (e.g., "UnityProject/Assets/Prefabs/",
                    "UnityProject/Assets/Scripts/Robotics/"). Only results under this
                    path are returned.
+        strategy: "associative" (default — spreading activation through dependency
+                  graph + RRF fusion) or "semantic" (vector-only, no graph expansion).
         output_format: "text" (default) or "json" for structured results.
     """
-    logger.info("search_code(query=%r, repo=%s, n=%d, module=%s, offset=%d, file_path=%s, format=%s)",
-                query, repo, n_results, module, offset, file_path, output_format)
+    logger.info("search_code(query=%r, repo=%s, n=%d, module=%s, offset=%d, file_path=%s, strategy=%s, format=%s)",
+                query, repo, n_results, module, offset, file_path, strategy, output_format)
     try:
-        return _search_code(query, repo, n_results, module, chunk_type, offset, file_path, output_format)
+        return _search_code(query, repo, n_results, module, chunk_type, offset, file_path, strategy, output_format)
     except Exception as e:
         logger.exception("search_code failed")
         return f"Error: {e}\n\nTip: Has the repo been indexed? Run reindex('{repo}') first."
@@ -226,6 +231,7 @@ async def reindex(repo: str = "perception", incremental: bool = True,
         invalidate_graph_cache(None if resolved == "all" else resolved)
         invalidate_dep_cache(None if resolved == "all" else resolved)
         invalidate_modules_cache(None if resolved == "all" else resolved)
+        invalidate_activation_cache(None if resolved == "all" else resolved)
         # Also rebuild Zenject bindings when indexing mainapp
         if resolved in ("mainapp", "all"):
             logger.info("Rebuilding Zenject bindings...")
@@ -414,6 +420,7 @@ async def rebuild_sidecars(repo: str = "mainapp",
         invalidate_hierarchy_cache(resolved)
         invalidate_asset_ref_cache(resolved)
         invalidate_dep_cache(resolved)
+        invalidate_activation_cache(resolved)
         return result
     except Exception as e:
         logger.exception("rebuild_sidecars failed")
@@ -536,6 +543,29 @@ def get_project_info(repo: str = "mainapp") -> str:
         return _get_project_info(repo)
     except Exception as e:
         logger.exception("get_project_info failed")
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def analyze_codebase(repo: str = "mainapp", top_n: int = 20,
+                     output_format: str = "text") -> str:
+    """Analyze the class dependency graph: PageRank centrality and community detection.
+
+    Identifies the most central classes (touch these and a lot breaks) and
+    automatically discovers architectural modules via Louvain community detection
+    on the dependency graph.
+
+    Args:
+        repo: Which repo to analyze (default "mainapp").
+        top_n: Number of top PageRank results (default 20, max 50).
+        output_format: "text" (default) or "json" for structured output.
+    """
+    logger.info("analyze_codebase(repo=%s, top_n=%d, format=%s)", repo, top_n, output_format)
+    try:
+        from src.tools.graph_analysis import analyze_codebase as _analyze
+        return _analyze(repo, top_n, output_format)
+    except Exception as e:
+        logger.exception("analyze_codebase failed")
         return f"Error: {e}"
 
 
@@ -802,6 +832,7 @@ async def start_reindex(repo: str = "mainapp", incremental: bool = True,
         invalidate_graph_cache(None if resolved == "all" else resolved)
         invalidate_dep_cache(None if resolved == "all" else resolved)
         invalidate_modules_cache(None if resolved == "all" else resolved)
+        invalidate_activation_cache(None if resolved == "all" else resolved)
         if resolved in ("mainapp", "all"):
             zenject_result = rebuild_zenject_bindings()
             result += "\n\n" + zenject_result

@@ -141,9 +141,13 @@ def _get_staleness_warning(repo: str) -> str:
 def search_code(query: str, repo: str = "all", n_results: int = 10,
                 module: str | None = None, chunk_type: str | None = None,
                 offset: int = 0, file_path: str | None = None,
+                strategy: str = "associative",
                 output_format: str = "text") -> str:
     """Semantic code search across indexed C#, C++, Python, JavaScript, HTML,
     and Unity prefab/scene codebases.
+
+    Default strategy uses spreading activation to explore the dependency graph
+    outward from vector search hits, then merges both rankings via RRF.
 
     Args:
         query: Natural language description of what you're looking for.
@@ -156,6 +160,8 @@ def search_code(query: str, repo: str = "all", n_results: int = 10,
         offset: Skip the first N results (for pagination). Default 0.
         file_path: Optional path prefix filter. Only results whose file_path starts
                    with this string are returned (e.g., "UnityProject/Assets/Prefabs/").
+        strategy: "associative" (default — spreading activation + RRF fusion)
+                  or "semantic" (vector-only, no graph expansion).
         output_format: "text" (default) or "json".
 
     Returns:
@@ -320,6 +326,11 @@ def search_code(query: str, repo: str = "all", n_results: int = 10,
             if available:
                 hint = f"\n\nAvailable modules for '{repo}': {', '.join(sorted(available))}"
         return f"No confident results for '{query}' in {repo} (all results below relevance threshold).{hint}"
+
+    # Graph expansion via spreading activation + RRF fusion
+    strategy = (strategy or "associative").lower()
+    if strategy == "associative" and results["ids"][0]:
+        results = _expand_via_graph(results, repo, collection, n_results)
 
     staleness = _get_staleness_warning(repo)
     if output_format == "json":
@@ -519,6 +530,133 @@ def _search_all_repos(query: str, n_results: int, module: str | None,
         )
 
     return result + "".join(staleness_parts)
+
+
+def _expand_via_graph(results: dict, repo: str, collection, n_results: int) -> dict:
+    """Expand search results via spreading activation on the dependency graph.
+
+    Extracts class names from vector results, runs spreading activation to find
+    related classes, fetches their chunks, and merges via RRF.
+    """
+    try:
+        from src.graph.activation import spread_activation
+    except Exception:
+        return results  # graceful fallback if graph module fails
+
+    # Extract unique class names from vector results
+    seed_classes = set()
+    for meta in results["metadatas"][0]:
+        cn = meta.get("class_name", "")
+        if cn:
+            seed_classes.add(cn)
+
+    if not seed_classes:
+        return results
+
+    # Run spreading activation
+    try:
+        activated = spread_activation(repo, seed_classes, decay=0.7, max_hops=2, top_k=10)
+    except Exception as e:
+        logger.debug("Graph expansion failed for '%s': %s", repo, e)
+        return results
+
+    if not activated:
+        return results
+
+    # Get activated class names (excluding seeds)
+    activated_classes = set()
+    for node_key in activated:
+        # Extract class name from node key
+        if "@@" in node_key:
+            activated_classes.add(node_key.split("@@", 1)[0])
+        elif "." in node_key:
+            activated_classes.add(node_key.rsplit(".", 1)[-1])
+        else:
+            activated_classes.add(node_key)
+
+    activated_classes -= seed_classes
+    if not activated_classes:
+        return results
+
+    # Fetch chunks for activated classes (batch query by class_name)
+    graph_chunks: list[tuple[str, dict, str, float]] = []  # (id, meta, doc, energy)
+    existing_ids = set(results["ids"][0])
+
+    for class_name in list(activated_classes)[:8]:  # cap to avoid over-fetching
+        energy = 0.0
+        # Find the energy for this class (may match multiple node keys)
+        for nk, e in activated.items():
+            nk_class = nk.split("@@", 1)[0] if "@@" in nk else (nk.rsplit(".", 1)[-1] if "." in nk else nk)
+            if nk_class == class_name:
+                energy = max(energy, e)
+
+        try:
+            class_results = collection.get(
+                where={"class_name": class_name},
+                include=["metadatas", "documents"],
+                limit=3,  # top 3 chunks per activated class
+            )
+        except Exception:
+            continue
+
+        if not class_results["ids"]:
+            continue
+
+        for i, cid in enumerate(class_results["ids"]):
+            if cid in existing_ids:
+                continue
+            graph_chunks.append((
+                cid,
+                class_results["metadatas"][i],
+                class_results["documents"][i],
+                energy,
+            ))
+
+    if not graph_chunks:
+        return results
+
+    # RRF fusion: rank vector results by position, graph results by energy
+    vector_ids = results["ids"][0]
+    graph_chunks.sort(key=lambda x: -x[3])  # sort by energy desc
+
+    rrf_scores: dict[str, float] = {}
+    k = 60
+
+    for rank, cid in enumerate(vector_ids, 1):
+        rrf_scores[cid] = rrf_scores.get(cid, 0.0) + 1.0 / (k + rank)
+
+    for rank, (cid, _, _, _) in enumerate(graph_chunks, 1):
+        rrf_scores[cid] = rrf_scores.get(cid, 0.0) + 1.0 / (k + rank)
+
+    # Merge all items
+    all_ids = list(vector_ids)
+    all_metas = list(results["metadatas"][0])
+    all_docs = list(results["documents"][0])
+    all_dists = list(results["distances"][0])
+
+    # Add graph chunks with worst vector distance as baseline
+    worst_dist = max(all_dists) if all_dists else 1000.0
+    for cid, meta, doc, energy in graph_chunks:
+        if cid in existing_ids:
+            continue
+        existing_ids.add(cid)
+        all_ids.append(cid)
+        all_metas.append(meta)
+        all_docs.append(doc)
+        all_dists.append(worst_dist)
+
+    # Sort by RRF score
+    indices = list(range(len(all_ids)))
+    indices.sort(key=lambda i: rrf_scores.get(all_ids[i], 0.0), reverse=True)
+
+    # Rebuild results in RRF order, trimmed to n_results
+    indices = indices[:n_results]
+    return {
+        "ids": [[all_ids[i] for i in indices]],
+        "metadatas": [[all_metas[i] for i in indices]],
+        "documents": [[all_docs[i] for i in indices]],
+        "distances": [[all_dists[i] for i in indices]],
+    }
 
 
 def _get_query_embeddings_with_guard(query: str, guard_seconds: float | None = None) -> list[list[float]]:
