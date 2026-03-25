@@ -687,5 +687,146 @@ class TestDepGraph(unittest.TestCase):
         invalidate_dep_cache("testrepo")
 
 
+# ── Lua integration tests ────────────────────────────────────────────────────
+
+class TestLuaFindReferences(unittest.TestCase):
+    """Test that find_references includes .lua files."""
+
+    def test_find_references_in_lua_files(self):
+        from src.tools.references import find_references
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scripts = Path(tmpdir) / "scripts"
+            scripts.mkdir()
+            (scripts / "player.lua").write_text(
+                'local Player = class("Player", Entity)\n'
+                'function Player:takeDamage(amount)\n'
+                '    self.hp = self.hp - amount\n'
+                'end\n',
+                encoding="utf-8",
+            )
+            (scripts / "combat.lua").write_text(
+                'local function doCombat(attacker, defender)\n'
+                '    local damage = attacker.atk - defender.def\n'
+                '    defender:takeDamage(damage)\n'
+                'end\n',
+                encoding="utf-8",
+            )
+
+            from src.config import RepoConfig, SourceDirConfig
+            config = RepoConfig(
+                name="lua_test",
+                root=Path(tmpdir),
+                collection_name="test",
+                source_dirs=[SourceDirConfig(path=scripts, language="lua")],
+            )
+            with patch("src.tools.references.REPOS", {"lua_test": config}), \
+                 patch("src.tools.references.resolve_repo", return_value="lua_test"):
+                result = find_references("takeDamage", repo="lua_test")
+                self.assertIn("takeDamage", result)
+                self.assertIn("player.lua", result)
+                self.assertIn("combat.lua", result)
+
+    def test_lua_definition_detection(self):
+        from src.tools.references import _is_definition_line
+        # function declaration
+        self.assertTrue(_is_definition_line(
+            'function Player:takeDamage(amount)', 'takeDamage', 'player.lua'))
+        # local function
+        self.assertTrue(_is_definition_line(
+            'local function processReward(player, reward)', 'processReward', 'rewards.lua'))
+        # local variable assignment
+        self.assertTrue(_is_definition_line(
+            'local QuestManager = class("QuestManager", BaseManager)', 'QuestManager', 'quest.lua'))
+        # usage (not definition)
+        self.assertFalse(_is_definition_line(
+            '    defender:takeDamage(damage)', 'takeDamage', 'combat.lua'))
+
+
+class TestLuaDepGraph(unittest.TestCase):
+    """Test dep graph extraction for Lua code."""
+
+    def test_extract_lua_require_names(self):
+        from src.indexer.dep_graph_builder import _extract_lua_import_names
+        source = textwrap.dedent("""\
+            local util = require("xlua.util")
+            local json = require("cjson")
+            local QuestDB = require("game.data.QuestDB")
+        """)
+        names = _extract_lua_import_names(source)
+        self.assertIn("util", names)
+        self.assertIn("cjson", names)
+        self.assertIn("QuestDB", names)
+
+    def test_extract_lua_cs_references(self):
+        from src.indexer.dep_graph_builder import _extract_lua_import_names
+        source = textwrap.dedent("""\
+            xlua.hotfix(CS.Game.Combat.DamageSystem, 'Calculate', function(self)
+                local player = CS.Game.Player.GetActive()
+            end)
+        """)
+        names = _extract_lua_import_names(source)
+        self.assertIn("DamageSystem", names)
+        self.assertIn("Player", names)
+        self.assertIn("Game", names)
+        self.assertIn("Combat", names)
+
+    def test_lua_comments_stripped_from_candidates(self):
+        from src.indexer.dep_graph_builder import extract_type_candidates
+        source = textwrap.dedent("""\
+            -- FakeClass reference in comment
+            --[[ BlockComment with AnotherFake ]]
+            local RealClass = require("real")
+        """)
+        candidates = extract_type_candidates(source)
+        self.assertNotIn("FakeClass", candidates)
+        self.assertNotIn("BlockComment", candidates)
+        self.assertNotIn("AnotherFake", candidates)
+        self.assertIn("RealClass", candidates)
+
+    def test_lua_type_candidates_full_pipeline(self):
+        """Lua code should produce sensible type candidates for dep graph."""
+        from src.indexer.dep_graph_builder import extract_type_candidates
+        source = textwrap.dedent("""\
+            local Player = class("Player", Entity)
+            function Player:takeDamage(amount)
+                local DamageCalculator = require("game.DamageCalculator")
+                local result = DamageCalculator.calculate(self, amount)
+                CS.Game.Events.EventSystem.Fire("OnDamage", self, amount)
+            end
+        """)
+        candidates = extract_type_candidates(source)
+        self.assertIn("Player", candidates)
+        self.assertIn("Entity", candidates)
+        self.assertIn("DamageCalculator", candidates)
+        self.assertIn("EventSystem", candidates)
+
+
+class TestLuaTypeHierarchy(unittest.TestCase):
+    """Test that Lua base_types flow into the type hierarchy sidecar."""
+
+    def test_hierarchy_from_lua_chunks(self):
+        from src.indexer.hierarchy_builder import build_type_hierarchy
+        # Simulate records from Lua chunking with class() OOP and EmmyLua
+        records = [
+            ("class_summary", "Player", "game/player.lua", "game", "game.player", ["Entity"]),
+            ("class_summary", "BossAI", "ai/boss.lua", "ai", "ai.boss", ["BaseAI", "IBehavior"]),
+            ("whole_class", "SmallUtil", "util/small.lua", "util", "util.small", ["BaseUtil"]),
+        ]
+        hierarchy = build_type_hierarchy(records)
+        # Entity should list Player as an implementation
+        self.assertIn("Entity", hierarchy)
+        impls = [e["class"] for e in hierarchy["Entity"]]
+        self.assertIn("Player", impls)
+        # BaseAI should list BossAI
+        self.assertIn("BaseAI", hierarchy)
+        self.assertIn("BossAI", [e["class"] for e in hierarchy["BaseAI"]])
+        # IBehavior should list BossAI
+        self.assertIn("IBehavior", hierarchy)
+        self.assertIn("BossAI", [e["class"] for e in hierarchy["IBehavior"]])
+        # BaseUtil should list SmallUtil
+        self.assertIn("BaseUtil", hierarchy)
+        self.assertIn("SmallUtil", [e["class"] for e in hierarchy["BaseUtil"]])
+
+
 if __name__ == "__main__":
     unittest.main()

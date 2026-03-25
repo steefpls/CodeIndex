@@ -22,6 +22,7 @@ from src.indexer.chunker_markdown import chunk_file_markdown
 from src.indexer.chunker_rust import chunk_file_rust
 from src.indexer.chunker_ts import chunk_file_ts
 from src.indexer.chunker_css import chunk_file_css
+from src.indexer.chunker_lua import chunk_file_lua
 from src.indexer.guid_resolver import build_guid_map
 from src.indexer.metadata import detect_module
 from src.indexer.embedder import get_collection, get_embedding_function, release_embedding_function
@@ -57,6 +58,7 @@ _CHUNKERS = {
     "rust": chunk_file_rust,
     "typescript": chunk_file_ts,
     "css": chunk_file_css,
+    "lua": chunk_file_lua,
 }
 
 # For extracting script GUID references from Unity asset files (asset ref sidecar)

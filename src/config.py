@@ -88,6 +88,7 @@ LANGUAGE_EXTENSIONS: dict[str, frozenset[str]] = {
     "rust": frozenset({".rs"}),
     "typescript": frozenset({".ts", ".tsx"}),
     "css": frozenset({".css"}),
+    "lua": frozenset({".lua"}),
 }
 
 

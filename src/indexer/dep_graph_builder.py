@@ -19,6 +19,9 @@ _SINGLE_LINE_COMMENT_RE = re.compile(r'//.*$', re.MULTILINE)
 _MULTI_LINE_COMMENT_RE = re.compile(r'/\*.*?\*/', re.DOTALL)
 _STRING_LITERAL_RE = re.compile(r'"[^"\\]*(?:\\.[^"\\]*)*"')
 _ATTRIBUTE_RE = re.compile(r'\[\s*\w+(?:\s*\([^)]*\))?\s*\]')
+# Lua comment patterns (--[[ block ]] must be stripped before -- single-line)
+_LUA_BLOCK_COMMENT_RE = re.compile(r'--\[\[.*?\]\]', re.DOTALL)
+_LUA_LINE_COMMENT_RE = re.compile(r'--(?!\[\[).*$', re.MULTILINE)
 
 # Python import patterns: capture module paths and imported names.
 # The from-import pattern handles both single-line and parenthesized multi-line imports.
@@ -54,6 +57,18 @@ _JS_REEXPORT_RE = re.compile(
     r"""export\s+\{([^}]+)\}\s+from\s+['"]([^'"]+)['"]""",
 )
 
+# Lua require patterns:
+#   local foo = require("bar.baz")  → captures variable name + module path
+#   local foo = require('bar.baz')
+_LUA_REQUIRE_RE = re.compile(
+    r"""local\s+(\w+)\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)""",
+)
+# Lua CS.Namespace.Class references (xLua interop):
+#   CS.Game.Combat.DamageSystem  → captures the dotted path
+_LUA_CS_REF_RE = re.compile(
+    r"""\bCS\.([A-Z][\w.]*\w)""",
+)
+
 # Chunk types that represent actual code classes (not prefab/scene elements)
 CODE_CHUNK_TYPES = frozenset({
     "whole_class", "class_summary", "method", "constructor", "property", "function",
@@ -65,8 +80,17 @@ DepRecord = tuple[str, str, str, str, set[str]]
 
 
 def _clean_source(source_text: str) -> str:
-    """Strip comments, string literals, and attributes to reduce noise."""
-    text = _SINGLE_LINE_COMMENT_RE.sub('', source_text)
+    """Strip comments, string literals, and attributes to reduce noise.
+
+    Handles both C-style (// /* */) and Lua-style (-- --[[ ]]) comments.
+    Running both sets on all languages is safe: C-style patterns are no-ops on
+    Lua code and vice versa.
+    """
+    # Lua block comments first (before line comments to avoid partial matches)
+    text = _LUA_BLOCK_COMMENT_RE.sub('', source_text)
+    text = _LUA_LINE_COMMENT_RE.sub('', text)
+    # C-style comments
+    text = _SINGLE_LINE_COMMENT_RE.sub('', text)
     text = _MULTI_LINE_COMMENT_RE.sub('', text)
     text = _STRING_LITERAL_RE.sub('', text)
     text = _ATTRIBUTE_RE.sub('', text)
@@ -197,6 +221,36 @@ def _extract_js_import_names(source_text: str) -> set[str]:
     return candidates
 
 
+def _extract_lua_import_names(source_text: str) -> set[str]:
+    """Extract dependency names from Lua require() and CS.* references.
+
+    Captures:
+      - ``local foo = require("bar.baz")`` → {foo, baz}
+      - ``CS.Game.Combat.DamageSystem``    → {Game, Combat, DamageSystem}
+
+    These names are intersected with known class names by the caller.
+    """
+    candidates: set[str] = set()
+
+    for match in _LUA_REQUIRE_RE.finditer(source_text):
+        var_name = match.group(1)
+        module_path = match.group(2)
+        if len(var_name) >= _MIN_NAME_LENGTH and var_name.isidentifier():
+            candidates.add(var_name)
+        # Last segment of dotted module path
+        last_segment = module_path.rsplit(".", 1)[-1]
+        if len(last_segment) >= _MIN_NAME_LENGTH and last_segment.isidentifier():
+            candidates.add(last_segment)
+
+    for match in _LUA_CS_REF_RE.finditer(source_text):
+        # Split CS.Game.Combat.DamageSystem into individual segments
+        for segment in match.group(1).split("."):
+            if len(segment) >= _MIN_NAME_LENGTH and segment[0].isupper():
+                candidates.add(segment)
+
+    return candidates
+
+
 def extract_type_candidates(source_text: str) -> set[str]:
     """Extract potential type references from source code.
 
@@ -206,6 +260,7 @@ def extract_type_candidates(source_text: str) -> set[str]:
     Additionally extracts imported names from language-specific import syntax:
       - Python: ``import`` / ``from ... import`` statements
       - JS/TS: ESM ``import``, ``export from``, and CommonJS ``require``
+      - Lua: ``require()`` calls and ``CS.*`` interop references
 
     These regexes only match their respective language syntax, so running on
     other languages is a no-op. The caller intersects with known class names
@@ -217,6 +272,7 @@ def extract_type_candidates(source_text: str) -> set[str]:
     # Language-specific import extraction (safe to run on all — no cross-language false positives)
     candidates.update(_extract_python_import_names(source_text))
     candidates.update(_extract_js_import_names(source_text))
+    candidates.update(_extract_lua_import_names(source_text))
 
     return candidates
 

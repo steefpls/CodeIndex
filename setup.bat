@@ -90,7 +90,7 @@ if "%ORT_INSTALL_OK%"=="0" (
 )
 
 echo [INFO] Installing core packages...
-"%VENV_PYTHON%" -m pip install -q "mcp[cli]" tree-sitter tree-sitter-c-sharp tree-sitter-cpp tree-sitter-python tree-sitter-javascript tree-sitter-html tree-sitter-rust tree-sitter-typescript tree-sitter-css chromadb networkx
+"%VENV_PYTHON%" -m pip install -q "mcp[cli]" tree-sitter tree-sitter-c-sharp tree-sitter-cpp tree-sitter-python tree-sitter-javascript tree-sitter-html tree-sitter-lua tree-sitter-rust tree-sitter-typescript tree-sitter-css chromadb networkx
 if errorlevel 1 (
     echo [ERROR] Failed to install core packages.
     set "EXIT_CODE=1"

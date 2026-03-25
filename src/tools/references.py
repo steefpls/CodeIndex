@@ -15,7 +15,7 @@ from src.indexer.hierarchy_builder import load_type_hierarchy
 logger = logging.getLogger(__name__)
 
 # Languages where symbol reference search is useful (code, not data)
-_CODE_LANGUAGES = frozenset({"csharp", "cpp", "python", "javascript", "html"})
+_CODE_LANGUAGES = frozenset({"csharp", "cpp", "python", "javascript", "html", "lua", "typescript", "rust"})
 
 # Check for ripgrep availability once at import time
 _RG_PATH = shutil.which("rg")
@@ -46,6 +46,13 @@ _DEF_PATTERNS_JS = [
     re.compile(r'\b(?:const|let|var)\s+{symbol}\b'),
 ]
 
+_DEF_PATTERNS_LUA = [
+    # function Name() / function Table.Name() / function Table:Name()
+    re.compile(r'\b(?:local\s+)?function\s+(?:\w+[.:])?{symbol}\s*\('),
+    # local Name = (class, table, function, value)
+    re.compile(r'\blocal\s+{symbol}\s*='),
+]
+
 _DEF_PATTERN_MAP = {
     ".cs": _DEF_PATTERNS_CS,
     ".cpp": _DEF_PATTERNS_CPP,
@@ -56,6 +63,7 @@ _DEF_PATTERN_MAP = {
     ".ts": _DEF_PATTERNS_JS,
     ".tsx": _DEF_PATTERNS_JS,
     ".jsx": _DEF_PATTERNS_JS,
+    ".lua": _DEF_PATTERNS_LUA,
 }
 
 
