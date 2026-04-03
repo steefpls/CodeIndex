@@ -827,14 +827,11 @@ def _normalized_score(distance: float, repo: str) -> float:
     """Return a normalized relevance percentage (100% = perfect, 0% = irrelevant).
 
     Uses a piecewise scale based on per-repo calibration thresholds:
-      - distance=0        -> 100%
-      - distance=HIGH     -> 60%  (strong match)
-      - distance=MEDIUM   -> 35%  (moderate match)
-      - distance=LOW      -> 15%  (weak match)
-      - distance>=LOW*1.2 -> 0%   (irrelevant)
-
-    This makes scores intuitive: 80%+ is excellent, 50%+ is good,
-    30%+ is fair, below 15% is noise. Comparable across repos.
+      distance 0        → 100%
+      distance = HIGH   → 85%   (knowledge p25 — top-quartile match)
+      distance = MEDIUM → 55%   (knowledge p75 — typical match)
+      distance = LOW    → 15%   (nonsense p25  — noise floor)
+      distance > floor  →  0%
     """
     thresholds = _get_thresholds_cached(repo)
     high = thresholds.get("HIGH", 700)
@@ -845,18 +842,14 @@ def _normalized_score(distance: float, repo: str) -> float:
     if distance <= 0:
         return 100.0
     elif distance <= high:
-        # 0 -> 100%, HIGH -> 60%
-        return round(100.0 - (distance / high) * 40.0, 1)
+        return round(100.0 - (distance / high) * 15.0, 1)
     elif distance <= med:
-        # HIGH -> 60%, MEDIUM -> 35%
         t = (distance - high) / (med - high) if med > high else 0
-        return round(60.0 - t * 25.0, 1)
+        return round(85.0 - t * 30.0, 1)
     elif distance <= low:
-        # MEDIUM -> 35%, LOW -> 15%
         t = (distance - med) / (low - med) if low > med else 0
-        return round(35.0 - t * 20.0, 1)
+        return round(55.0 - t * 40.0, 1)
     elif distance <= floor:
-        # LOW -> 15%, floor -> 0%
         t = (distance - low) / (floor - low) if floor > low else 0
         return round(max(0.0, 15.0 - t * 15.0), 1)
     else:
