@@ -89,6 +89,7 @@ LANGUAGE_EXTENSIONS: dict[str, frozenset[str]] = {
     "typescript": frozenset({".ts", ".tsx"}),
     "css": frozenset({".css"}),
     "lua": frozenset({".lua"}),
+    "go": frozenset({".go"}),
 }
 
 
@@ -217,6 +218,7 @@ _EXTENSION_TO_LANGUAGE: dict[str, str] = {
     ".rs": "rust",
     ".ts": "typescript", ".tsx": "typescript",
     ".css": "css",
+    ".go": "go",
 }
 
 _DEFAULT_EXCLUDE_PATTERNS: dict[str, list[str]] = {
@@ -232,6 +234,7 @@ _DEFAULT_EXCLUDE_PATTERNS: dict[str, list[str]] = {
     "rust": ["target/", ".cargo/"],
     "typescript": ["node_modules/", "dist/", "build/", ".next/", "*.d.ts"],
     "css": ["node_modules/", "dist/", "*.min.css"],
+    "go": ["vendor/", "*_test.go", "*.pb.go"],
 }
 
 # Directories to always skip when walking for auto-detection
@@ -239,6 +242,7 @@ _ALWAYS_SKIP_DIRS = frozenset({
     ".git", ".svn", ".hg", "node_modules", "__pycache__", ".venv", "venv",
     "bin", "obj", ".vs", ".idea", ".vscode", "dist", "build", "out",
     "packages", "PackageCache", ".next", ".egg-info",
+    "vendor", "target",
 })
 
 # Safety limit for auto-detection walk

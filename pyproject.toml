@@ -15,6 +15,7 @@ dependencies = [
     "tree-sitter-typescript",
     "tree-sitter-css",
     "tree-sitter-lua",
+    "tree-sitter-go",
     "chromadb",
     "sentence-transformers",
     "transformers",

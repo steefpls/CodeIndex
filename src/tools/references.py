@@ -15,7 +15,7 @@ from src.indexer.hierarchy_builder import load_type_hierarchy
 logger = logging.getLogger(__name__)
 
 # Languages where symbol reference search is useful (code, not data)
-_CODE_LANGUAGES = frozenset({"csharp", "cpp", "python", "javascript", "html", "lua", "typescript", "rust"})
+_CODE_LANGUAGES = frozenset({"csharp", "cpp", "python", "javascript", "html", "lua", "typescript", "rust", "go"})
 
 # Check for ripgrep availability once at import time
 _RG_PATH = shutil.which("rg")
